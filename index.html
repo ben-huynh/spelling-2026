@@ -223,6 +223,42 @@
             margin-left: 10px;
         }
         
+        .voice-settings {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            align-items: center;
+            gap: 12px;
+            margin: 10px auto;
+            padding: 10px;
+            background: #f0f4f8;
+            border-radius: 5px;
+            font-size: 14px;
+            color: #444;
+        }
+
+        .voice-settings label {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .voice-settings select {
+            font-size: 14px;
+            padding: 4px;
+            max-width: 260px;
+        }
+
+        .test-voice-btn {
+            background: white;
+            border: 1px solid #2196F3;
+            color: #2196F3;
+            padding: 5px 10px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+
         .next-btn {
             background: #FF9800;
             color: white;
@@ -276,6 +312,17 @@
             
             <button class="audio-btn" onclick="speakWord()">🔊 Hear Word</button>
             <button class="audio-btn" onclick="speakDefinition()">📖 Hear Definition</button>
+
+            <div class="voice-settings">
+                <label>Voice
+                    <select id="voiceSelect" onchange="onVoiceChange()"></select>
+                </label>
+                <label>Speed
+                    <input type="range" id="rateSlider" min="0.4" max="1.2" step="0.1" value="0.7" oninput="onRateChange()">
+                    <span id="rateValue">0.7×</span>
+                </label>
+                <button class="test-voice-btn" onclick="testVoice()">▶ Test voice</button>
+            </div>
             
             <div class="input-area">
                 <input type="text" class="spelling-input" id="spellingInput" 
@@ -759,10 +806,7 @@
                 speechSynthesis.cancel();
 
                 setTimeout(() => {
-                    const utterance = new SpeechSynthesisUtterance(currentWord.word);
-                    utterance.rate = 0.7;
-                    utterance.pitch = 1;
-                    speechSynthesis.speak(utterance);
+                    speak(currentWord.word, speechRate);
                 }, 100);
 
                 document.getElementById('wordDisplay').textContent = `Listen carefully and spell the word!`;
@@ -776,9 +820,7 @@
             if ('speechSynthesis' in window) {
                 speechSynthesis.cancel();
                 setTimeout(() => {
-                    const utterance = new SpeechSynthesisUtterance(`Definition: ${currentWord.definition}`);
-                    utterance.rate = 0.8;
-                    speechSynthesis.speak(utterance);
+                    speak(`Definition: ${currentWord.definition}`, Math.min(speechRate + 0.1, 1.2));
                 }, 100);
             } else {
                 alert(`Definition: ${currentWord.definition}`);
@@ -985,11 +1027,101 @@
             document.getElementById('missedWordsList').innerHTML = '';
         }
 
+        // ---------- Voice and speed settings ----------
+        let selectedVoice = null;
+        let speechRate = 0.7;
+
+        function loadSetting(key) {
+            try { return localStorage.getItem(key); } catch (e) { return null; }
+        }
+        function saveSetting(key, value) {
+            try { localStorage.setItem(key, value); } catch (e) { /* storage unavailable */ }
+        }
+
+        function speak(text, rate) {
+            const utterance = new SpeechSynthesisUtterance(text);
+            if (selectedVoice) {
+                utterance.voice = selectedVoice;
+                utterance.lang = selectedVoice.lang;
+            } else {
+                utterance.lang = 'en-US';
+            }
+            utterance.rate = rate;
+            utterance.pitch = 1;
+            speechSynthesis.speak(utterance);
+        }
+
+        // Rank voices so the clearest ones come first: high-quality/neural
+        // voices, then US English, then other English.
+        function voiceScore(v) {
+            const n = v.name.toLowerCase();
+            let s = 0;
+            if (/natural|neural|premium|enhanced|online/.test(n)) s += 4;
+            if (/google/.test(n)) s += 3;
+            if (/samantha|ava|allison|aria|jenny|guy|zoe|evan|nathan|susan/.test(n)) s += 2;
+            if (v.lang.toLowerCase().startsWith('en-us')) s += 2;
+            if (/novelty|whisper|bad news|bells|boing|bubbles|cellos|jester|organ|trinoids|zarvox|albert|bahh|wobble|superstar|good news|deranged|hysterical/.test(n)) s -= 20;
+            return s;
+        }
+
+        function populateVoices() {
+            if (!('speechSynthesis' in window)) {
+                document.querySelector('.voice-settings').style.display = 'none';
+                return;
+            }
+            const voices = speechSynthesis.getVoices()
+                .filter(v => v.lang && v.lang.toLowerCase().startsWith('en'))
+                .sort((a, b) => voiceScore(b) - voiceScore(a) || a.name.localeCompare(b.name));
+            if (!voices.length) return; // voices not loaded yet; voiceschanged will call again
+
+            const select = document.getElementById('voiceSelect');
+            const saved = loadSetting('quizVoice');
+            select.innerHTML = '';
+            voices.forEach(v => {
+                const opt = document.createElement('option');
+                opt.value = v.name;
+                opt.textContent = `${v.name} (${v.lang})`;
+                select.appendChild(opt);
+            });
+
+            const match = voices.find(v => v.name === saved) || voices[0];
+            select.value = match.name;
+            selectedVoice = match;
+        }
+
+        function onVoiceChange() {
+            const name = document.getElementById('voiceSelect').value;
+            selectedVoice = speechSynthesis.getVoices().find(v => v.name === name) || null;
+            saveSetting('quizVoice', name);
+            testVoice();
+        }
+
+        function onRateChange() {
+            speechRate = parseFloat(document.getElementById('rateSlider').value);
+            document.getElementById('rateValue').textContent = `${speechRate.toFixed(1)}×`;
+            saveSetting('quizRate', String(speechRate));
+        }
+
+        function testVoice() {
+            if (!('speechSynthesis' in window)) return;
+            speechSynthesis.cancel();
+            const sample = currentWord ? currentWord.word : 'Hello! Let\'s practice spelling.';
+            setTimeout(() => speak(sample, speechRate), 100);
+        }
+
         // Initialize speech synthesis on page load
         window.addEventListener('load', function() {
+            const savedRate = parseFloat(loadSetting('quizRate'));
+            if (savedRate >= 0.4 && savedRate <= 1.2) {
+                document.getElementById('rateSlider').value = savedRate;
+                onRateChange();
+            }
             if ('speechSynthesis' in window) {
-                // Preload voices
-                speechSynthesis.getVoices();
+                populateVoices();
+                // Chrome and Edge load voices asynchronously
+                speechSynthesis.addEventListener('voiceschanged', populateVoices);
+            } else {
+                document.querySelector('.voice-settings').style.display = 'none';
             }
         });
     </script>
